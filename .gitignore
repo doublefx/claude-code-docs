@@ -25,7 +25,6 @@ Thumbs.db
 .claude/settings.local.json
 .last_pull
 .last_check
-claude-docs-helper.sh
 
 # Test files
 test_*.txt

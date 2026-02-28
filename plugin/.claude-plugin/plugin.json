@@ -1,0 +1,27 @@
+{
+  "name": "magic-claude-docs",
+  "version": "2026.2.28.1",
+  "description": "Community mirror of Claude Code documentation - search, browse, and view what's new offline",
+  "author": {
+    "name": "doublefx",
+    "url": "https://github.com/doublefx"
+  },
+  "homepage": "https://github.com/doublefx/claude-code-docs",
+  "repository": "https://github.com/doublefx/claude-code-docs",
+  "license": "MIT",
+  "keywords": [
+    "documentation",
+    "claude-code",
+    "docs",
+    "reference",
+    "offline"
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "D=\"$HOME/.claude-code-docs\"; if [ -d \"${CLAUDE_PLUGIN_ROOT}/docs\" ]; then mkdir -p \"$D\" && touch \"$D/.magic-claude-docs-plugin\" && rm -rf \"$D\"/* && cp -R \"${CLAUDE_PLUGIN_ROOT}/docs/.\" \"$D/\"; fi"
+      }
+    ]
+  }
+}

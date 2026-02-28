@@ -1,0 +1,37 @@
+{
+  "name": "magic-claude-docs",
+  "owner": {
+    "name": "doublefx"
+  },
+  "metadata": {
+    "description": "Community mirror of Claude Code documentation with offline access",
+    "homepage": "https://github.com/doublefx/claude-code-docs"
+  },
+  "plugins": [
+    {
+      "name": "magic-claude-docs",
+      "source": "./plugin",
+      "description": "Offline Claude Code documentation - search, browse, and stay current with docs",
+      "author": {
+        "name": "doublefx",
+        "url": "https://github.com/doublefx"
+      },
+      "homepage": "https://github.com/doublefx/claude-code-docs",
+      "repository": "https://github.com/doublefx/claude-code-docs",
+      "license": "MIT",
+      "keywords": [
+        "documentation",
+        "claude-code",
+        "docs",
+        "reference",
+        "offline"
+      ],
+      "category": "documentation",
+      "tags": [
+        "documentation",
+        "reference",
+        "offline-docs"
+      ]
+    }
+  ]
+}

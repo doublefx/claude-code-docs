@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'scripts/claude-docs-helper.sh.template'
+      - 'plugin/.claude-plugin/plugin.json'
   workflow_dispatch: # Allow manual trigger
 
 permissions:
@@ -21,10 +21,10 @@ jobs:
       with:
         fetch-depth: 0 # Get all history for changelog
 
-    - name: Extract version from helper script
+    - name: Extract version from plugin.json
       id: version
       run: |
-        VERSION=$(grep "^SCRIPT_VERSION=" scripts/claude-docs-helper.sh.template | cut -d'"' -f2)
+        VERSION=$(jq -r '.version' plugin/.claude-plugin/plugin.json)
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "tag=v$VERSION" >> $GITHUB_OUTPUT
         echo "Extracted version: $VERSION"
@@ -56,7 +56,7 @@ jobs:
         ### Installation
 
         \`\`\`bash
-        curl -fsSL https://raw.githubusercontent.com/ericbuess/claude-code-docs/main/install.sh | bash
+        claude plugin add https://github.com/doublefx/claude-code-docs
         \`\`\`
 
         ### What's Changed (Auto-generated)
@@ -67,4 +67,4 @@ jobs:
     - name: Release already exists
       if: steps.check_release.outputs.exists == 'true'
       run: |
-        echo "ℹ️ Release ${{ steps.version.outputs.tag }} already exists, skipping creation"
+        echo "Release ${{ steps.version.outputs.tag }} already exists, skipping creation"
