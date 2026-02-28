@@ -56,7 +56,8 @@ jobs:
         ### Installation
 
         \`\`\`bash
-        claude plugin add https://github.com/doublefx/claude-code-docs
+        claude plugin marketplace add https://github.com/doublefx/claude-code-docs
+        claude plugin install magic-claude-docs
         \`\`\`
 
         ### What's Changed (Auto-generated)

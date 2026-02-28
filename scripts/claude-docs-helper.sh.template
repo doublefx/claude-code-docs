@@ -1,6 +1,6 @@
 #!/bin/bash
 # DEPRECATED: This helper script is superseded by the magic-claude-docs plugin.
-# Install the plugin instead: claude plugin add https://github.com/doublefx/claude-code-docs
+# Install the plugin instead: claude plugin marketplace add https://github.com/doublefx/claude-code-docs && claude plugin install magic-claude-docs
 # This file will be removed in a future release.
 set -euo pipefail
 

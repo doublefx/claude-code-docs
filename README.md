@@ -20,7 +20,11 @@ Local mirror of Claude Code documentation from https://code.claude.com/docs/en/,
 ### As a Claude Code Plugin (Recommended)
 
 ```bash
-claude plugin add https://github.com/doublefx/claude-code-docs
+# Add the marketplace source (one-time)
+claude plugin marketplace add https://github.com/doublefx/claude-code-docs
+
+# Install the plugin
+claude plugin install magic-claude-docs
 ```
 
 After installation, **enable auto-update** for fresh docs:
@@ -64,7 +68,7 @@ After installation, **enable auto-update** for fresh docs:
 ## Uninstalling
 
 ```bash
-claude plugin remove magic-claude-docs
+claude plugin uninstall magic-claude-docs
 rm -rf ~/.claude-code-docs  # Optional: remove cached documentation
 ```
 

@@ -19,8 +19,13 @@
   "hooks": {
     "SessionStart": [
       {
-        "type": "command",
-        "command": "D=\"$HOME/.claude-code-docs\"; if [ -d \"${CLAUDE_PLUGIN_ROOT}/docs\" ]; then mkdir -p \"$D\" && touch \"$D/.magic-claude-docs-plugin\" && rm -rf \"$D\"/* && cp -R \"${CLAUDE_PLUGIN_ROOT}/docs/.\" \"$D/\"; fi"
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "D=\"$HOME/.claude-code-docs\"; if [ -d \"${CLAUDE_PLUGIN_ROOT}/docs\" ]; then mkdir -p \"$D\" && touch \"$D/.magic-claude-docs-plugin\" && rm -rf \"$D\"/* && cp -R \"${CLAUDE_PLUGIN_ROOT}/docs/.\" \"$D/\"; fi"
+          }
+        ]
       }
     ]
   }
