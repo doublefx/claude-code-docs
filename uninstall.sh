@@ -4,16 +4,26 @@ set -euo pipefail
 # Claude Code Documentation Mirror - Smart Uninstaller
 # Dynamically finds and removes all installations
 
+# Claude configuration directory (respects CLAUDE_CONFIG_DIR)
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
 echo "Claude Code Documentation Mirror - Uninstaller"
 echo "=============================================="
 echo ""
+
+# Check dependencies
+if ! command -v jq &> /dev/null; then
+    echo "❌ Error: jq is required but not installed"
+    echo "Please install jq and try again"
+    exit 1
+fi
 
 # Find all installations from configs
 find_all_installations() {
     local paths=()
     
     # From command file
-    if [[ -f ~/.claude/commands/docs.md ]]; then
+    if [[ -f "$CLAUDE_DIR"/commands/docs.md ]]; then
         while IFS= read -r line; do
             if [[ "$line" =~ Execute:.*claude-code-docs ]]; then
                 local path=$(echo "$line" | grep -o '[^ "]*claude-code-docs[^ "]*' | head -1)
@@ -26,12 +36,12 @@ find_all_installations() {
                     paths+=("$(dirname "$path")")
                 fi
             fi
-        done < ~/.claude/commands/docs.md
+        done < "$CLAUDE_DIR"/commands/docs.md
     fi
     
     # From hooks
-    if [[ -f ~/.claude/settings.json ]]; then
-        local hooks=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // empty' ~/.claude/settings.json 2>/dev/null)
+    if [[ -f "$CLAUDE_DIR"/settings.json ]]; then
+        local hooks=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // empty' "$CLAUDE_DIR"/settings.json 2>/dev/null)
         while IFS= read -r cmd; do
             if [[ "$cmd" =~ claude-code-docs ]]; then
                 local found=$(echo "$cmd" | grep -o '[^ "]*claude-code-docs[^ "]*' || true)
@@ -48,6 +58,11 @@ find_all_installations() {
         done <<< "$hooks"
     fi
     
+    # Always check the default installation path
+    if [[ -d "$HOME/.claude-code-docs" ]]; then
+        paths+=("$HOME/.claude-code-docs")
+    fi
+
     # Deduplicate - handle empty array case
     if [[ ${#paths[@]} -gt 0 ]]; then
         printf '%s\n' "${paths[@]}" | sort -u
@@ -69,8 +84,8 @@ if [[ ${#installations[@]} -gt 0 ]]; then
 fi
 
 echo "This will remove:"
-echo "  • The /docs command from ~/.claude/commands/docs.md"
-echo "  • All claude-code-docs hooks from ~/.claude/settings.json"
+echo "  • The /docs command from "$CLAUDE_DIR"/commands/docs.md"
+echo "  • All claude-code-docs hooks from "$CLAUDE_DIR"/settings.json"
 if [[ ${#installations[@]} -gt 0 ]]; then
     echo "  • Installation directories (if safe to remove)"
 fi
@@ -84,24 +99,26 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 # Remove command file
-if [[ -f ~/.claude/commands/docs.md ]]; then
-    rm -f ~/.claude/commands/docs.md
+if [[ -f "$CLAUDE_DIR"/commands/docs.md ]]; then
+    rm -f "$CLAUDE_DIR"/commands/docs.md
     echo "✓ Removed /docs command"
 fi
 
 # Remove hooks
-if [[ -f ~/.claude/settings.json ]]; then
-    cp ~/.claude/settings.json ~/.claude/settings.json.backup
+if [[ -f "$CLAUDE_DIR"/settings.json ]]; then
+    cp "$CLAUDE_DIR"/settings.json "$CLAUDE_DIR"/settings.json.backup
     
-    # Remove ALL hooks containing claude-code-docs
-    jq '.hooks.PreToolUse = [(.hooks.PreToolUse // [])[] | select(.hooks[0].command | contains("claude-code-docs") | not)]' ~/.claude/settings.json > ~/.claude/settings.json.tmp
-    
+    # Remove ALL hooks containing claude-code-docs (atomic writes via mktemp)
+    tmp1=$(mktemp "$CLAUDE_DIR"/settings.json.XXXXXX)
+    jq '.hooks.PreToolUse = [(.hooks.PreToolUse // [])[] | select(.hooks[0].command | contains("claude-code-docs") | not)]' "$CLAUDE_DIR"/settings.json > "$tmp1"
+
     # Clean up empty structures
-    jq 'if .hooks.PreToolUse == [] then .hooks |= if . == {PreToolUse: []} then {} else del(.PreToolUse) end else . end | if .hooks == {} then del(.hooks) else . end' ~/.claude/settings.json.tmp > ~/.claude/settings.json.tmp2
-    
-    mv ~/.claude/settings.json.tmp2 ~/.claude/settings.json
-    rm -f ~/.claude/settings.json.tmp
-    echo "✓ Removed hooks (backup: ~/.claude/settings.json.backup)"
+    tmp2=$(mktemp "$CLAUDE_DIR"/settings.json.XXXXXX)
+    jq 'if .hooks.PreToolUse == [] then .hooks |= if . == {PreToolUse: []} then {} else del(.PreToolUse) end else . end | if .hooks == {} then del(.hooks) else . end' "$tmp1" > "$tmp2"
+
+    mv "$tmp2" "$CLAUDE_DIR"/settings.json
+    rm -f "$tmp1"
+    echo "✓ Removed hooks (backup: "$CLAUDE_DIR"/settings.json.backup)"
 fi
 
 # Remove directories
@@ -114,7 +131,7 @@ if [[ ${#installations[@]} -gt 0 ]]; then
         
         if [[ -d "$path/.git" ]]; then
             # Save current directory
-            local current_dir=$(pwd)
+            current_dir=$(pwd)
             cd "$path"
             
             if [[ -z "$(git status --porcelain 2>/dev/null)" ]]; then

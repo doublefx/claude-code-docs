@@ -10,21 +10,19 @@ echo "==============================="
 # Fixed installation location
 INSTALL_DIR="$HOME/.claude-code-docs"
 
+# Claude configuration directory (respects CLAUDE_CONFIG_DIR)
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
 # Branch to use for installation
 INSTALL_BRANCH="main"
 
-# Detect OS type
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    OS_TYPE="macos"
-    echo "✓ Detected macOS"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    OS_TYPE="linux"
-    echo "✓ Detected Linux"
-else
+# Verify supported OS
+if [[ "$OSTYPE" != "darwin"* && "$OSTYPE" != "linux-gnu"* ]]; then
     echo "❌ Error: Unsupported OS type: $OSTYPE"
     echo "This installer supports macOS and Linux only"
     exit 1
 fi
+echo "✓ Detected OS: $OSTYPE"
 
 # Check dependencies
 echo "Checking dependencies..."
@@ -43,7 +41,7 @@ find_existing_installations() {
     local paths=()
     
     # Check command file for paths
-    if [[ -f ~/.claude/commands/docs.md ]]; then
+    if [[ -f "$CLAUDE_DIR"/commands/docs.md ]]; then
         # Look for paths in the command file
         # v0.1 format: LOCAL DOCS AT: /path/to/claude-code-docs/docs/
         # v0.2+ format: Execute: /path/to/claude-code-docs/helper.sh
@@ -67,12 +65,12 @@ find_existing_installations() {
                     paths+=("$(dirname "$path")")
                 fi
             fi
-        done < ~/.claude/commands/docs.md
+        done < "$CLAUDE_DIR"/commands/docs.md
     fi
     
     # Check settings.json hooks for paths
-    if [[ -f ~/.claude/settings.json ]]; then
-        local hooks=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // empty' ~/.claude/settings.json 2>/dev/null)
+    if [[ -f "$CLAUDE_DIR"/settings.json ]]; then
+        local hooks=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // empty' "$CLAUDE_DIR"/settings.json 2>/dev/null)
         while IFS= read -r cmd; do
             if [[ "$cmd" =~ claude-code-docs ]]; then
                 # Extract paths from v0.1 complex hook format
@@ -140,9 +138,15 @@ migrate_installation() {
     
     # Remove old directory if safe
     if [[ "$should_preserve" == "false" ]]; then
-        echo "Removing old installation..."
-        rm -rf "$old_dir"
-        echo "✓ Old installation removed"
+        local resolved_old
+        resolved_old=$(realpath "$old_dir" 2>/dev/null || echo "$old_dir")
+        if [[ "$resolved_old" == *"claude-code-docs"* ]]; then
+            echo "Removing old installation..."
+            rm -rf "$old_dir"
+            echo "✓ Old installation removed"
+        else
+            echo "⚠️  Skipped removal: path does not contain 'claude-code-docs'"
+        fi
     else
         echo ""
         echo "ℹ️  Old installation preserved at: $old_dir"
@@ -320,8 +324,15 @@ cleanup_old_installations() {
             cd "$old_dir"
             if [[ -z "$(git status --porcelain 2>/dev/null)" ]]; then
                 cd - >/dev/null
-                rm -rf "$old_dir"
-                echo "    ✓ Removed (clean)"
+                # Validate path contains expected directory name before removal
+                local resolved_old_dir
+                resolved_old_dir=$(realpath "$old_dir" 2>/dev/null || echo "$old_dir")
+                if [[ "$resolved_old_dir" == *"claude-code-docs"* ]]; then
+                    rm -rf "$old_dir"
+                    echo "    ✓ Removed (clean)"
+                else
+                    echo "    ⚠️  Skipped removal: path does not contain 'claude-code-docs'"
+                fi
             else
                 cd - >/dev/null
                 echo "    ⚠️  Preserved (has uncommitted changes)"
@@ -404,15 +415,15 @@ fi
 
 # Always update command (in case it points to old location)
 echo "Setting up /docs command..."
-mkdir -p ~/.claude/commands
+mkdir -p "$CLAUDE_DIR"/commands
 
 # Remove old command if it exists
-if [[ -f ~/.claude/commands/docs.md ]]; then
+if [[ -f "$CLAUDE_DIR"/commands/docs.md ]]; then
     echo "  Updating existing command..."
 fi
 
 # Create simplified docs command
-cat > ~/.claude/commands/docs.md << 'EOF'
+cat > "$CLAUDE_DIR"/commands/docs.md << 'EOF'
 Execute the Claude Code Docs helper script at ~/.claude-code-docs/claude-docs-helper.sh
 
 Usage:
@@ -459,17 +470,20 @@ echo "Setting up automatic updates..."
 # Simple hook that just calls the helper script
 HOOK_COMMAND="~/.claude-code-docs/claude-docs-helper.sh hook-check"
 
-if [ -f ~/.claude/settings.json ]; then
+if [ -f "$CLAUDE_DIR"/settings.json ]; then
     # Update existing settings.json
     echo "  Updating Claude settings..."
     
     # First remove ALL hooks that contain "claude-code-docs" anywhere in the command
     # This catches old installations at any path
-    jq '.hooks.PreToolUse = [(.hooks.PreToolUse // [])[] | select(.hooks[0].command | contains("claude-code-docs") | not)]' ~/.claude/settings.json > ~/.claude/settings.json.tmp
-    
+    tmp1=$(mktemp "$CLAUDE_DIR"/settings.json.XXXXXX)
+    jq '.hooks.PreToolUse = [(.hooks.PreToolUse // [])[] | select(.hooks[0].command | contains("claude-code-docs") | not)]' "$CLAUDE_DIR"/settings.json > "$tmp1"
+
     # Then add our new hook
-    jq --arg cmd "$HOOK_COMMAND" '.hooks.PreToolUse = [(.hooks.PreToolUse // [])[]] + [{"matcher": "Read", "hooks": [{"type": "command", "command": $cmd}]}]' ~/.claude/settings.json.tmp > ~/.claude/settings.json
-    rm -f ~/.claude/settings.json.tmp
+    tmp2=$(mktemp "$CLAUDE_DIR"/settings.json.XXXXXX)
+    jq --arg cmd "$HOOK_COMMAND" '.hooks.PreToolUse = [(.hooks.PreToolUse // [])[]] + [{"matcher": "Read", "hooks": [{"type": "command", "command": $cmd}]}]' "$tmp1" > "$tmp2"
+    mv "$tmp2" "$CLAUDE_DIR"/settings.json
+    rm -f "$tmp1"
     echo "✓ Updated Claude settings"
 else
     # Create new settings.json
@@ -488,7 +502,7 @@ else
                 }
             ]
         }
-    }' > ~/.claude/settings.json
+    }' > "$CLAUDE_DIR"/settings.json
     echo "✓ Created Claude settings"
 fi
 

@@ -10,13 +10,17 @@ from typing import List, Tuple, Set, Optional
 import logging
 from datetime import datetime
 import sys
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from urllib.parse import urlparse
 import json
 import hashlib
 import os
 import re
 import random
+
+class FetchError(Exception):
+    """Raised when documentation fetching fails."""
+
 
 # Configure logging
 logging.basicConfig(
@@ -52,6 +56,56 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2  # initial delay in seconds
 MAX_RETRY_DELAY = 30  # maximum delay in seconds
 RATE_LIMIT_DELAY = 0.5  # seconds between requests
+MAX_REDIRECTS = 5
+
+# Fallback documentation pages when sitemap discovery fails
+FALLBACK_DOCUMENTATION_PAGES = [
+    "/docs/en/overview",
+    "/docs/en/setup",
+    "/docs/en/quickstart",
+    "/docs/en/memory",
+    "/docs/en/common-workflows",
+    "/docs/en/ide-integrations",
+    "/docs/en/mcp",
+    "/docs/en/github-actions",
+    "/docs/en/sdk",
+    "/docs/en/troubleshooting",
+    "/docs/en/security",
+    "/docs/en/settings",
+    "/docs/en/hooks",
+    "/docs/en/costs",
+    "/docs/en/monitoring-usage",
+]
+
+# Allowed hosts for redirect validation (SSRF prevention)
+ALLOWED_HOSTS = frozenset({
+    "docs.anthropic.com",
+    "code.claude.com",
+    "anthropic.com",
+    "raw.githubusercontent.com",
+    "github.com",
+})
+
+
+def safe_get(session: requests.Session, url: str, **kwargs) -> requests.Response:
+    """GET with redirect validation against ALLOWED_HOSTS to prevent SSRF."""
+    kwargs["allow_redirects"] = False
+    current_url = url
+    for _ in range(MAX_REDIRECTS):
+        parsed = urlparse(current_url)
+        if parsed.hostname not in ALLOWED_HOSTS:
+            raise ValueError(f"Request to disallowed host: {parsed.hostname}")
+        response = session.get(current_url, **kwargs)
+        if response.is_redirect or response.status_code in (301, 302, 303, 307, 308):
+            current_url = response.headers.get("Location", "")
+            if not current_url:
+                raise ValueError("Redirect with no Location header")
+            # Resolve relative redirects
+            if current_url.startswith("/"):
+                current_url = f"{parsed.scheme}://{parsed.netloc}{current_url}"
+            continue
+        return response
+    raise ValueError(f"Too many redirects (>{MAX_REDIRECTS})")
 
 
 def load_manifest(docs_dir: Path) -> dict:
@@ -70,29 +124,35 @@ def load_manifest(docs_dir: Path) -> dict:
 
 
 def save_manifest(docs_dir: Path, manifest: dict) -> None:
-    """Save the manifest of fetched files."""
+    """Save the manifest of fetched files.
+
+    Creates a new dict with metadata fields added so the caller's dict is not mutated.
+    """
     manifest_path = docs_dir / MANIFEST_FILE
-    manifest["last_updated"] = datetime.now().isoformat()
-    
+
     # Get GitHub repository from environment or use default
     github_repo = os.environ.get('GITHUB_REPOSITORY', 'ericbuess/claude-code-docs')
     github_ref = os.environ.get('GITHUB_REF_NAME', 'main')
-    
+
     # Validate repository name format (owner/repo)
     if not re.match(r'^[\w.-]+/[\w.-]+$', github_repo):
         logger.warning(f"Invalid repository format: {github_repo}, using default")
         github_repo = 'ericbuess/claude-code-docs'
-    
+
     # Validate branch/ref name
     if not re.match(r'^[\w.-]+$', github_ref):
         logger.warning(f"Invalid ref format: {github_ref}, using default")
         github_ref = 'main'
-    
-    manifest["base_url"] = f"https://raw.githubusercontent.com/{github_repo}/{github_ref}/docs/"
-    manifest["github_repository"] = github_repo
-    manifest["github_ref"] = github_ref
-    manifest["description"] = "Claude Code documentation manifest. Keys are filenames, append to base_url for full URL."
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    output = {
+        **manifest,
+        "last_updated": datetime.now().isoformat(),
+        "base_url": f"https://raw.githubusercontent.com/{github_repo}/{github_ref}/docs/",
+        "github_repository": github_repo,
+        "github_ref": github_ref,
+        "description": "Claude Code documentation manifest. Keys are filenames, append to base_url for full URL.",
+    }
+    manifest_path.write_text(json.dumps(output, indent=2))
 
 
 def url_to_safe_filename(url_path: str) -> str:
@@ -110,16 +170,24 @@ def url_to_safe_filename(url_path: str) -> str:
             path = url_path.split('claude-code/')[-1]
         else:
             path = url_path
-    
+
+    # Strip path traversal sequences and leading separators
+    path = path.replace('..', '').lstrip('./')
+
     # If no subdirectories, just use the filename
     if '/' not in path:
-        return path + '.md' if not path.endswith('.md') else path
-    
-    # For subdirectories, replace slashes with double underscores
-    # e.g., "advanced/setup" becomes "advanced__setup.md"
-    safe_name = path.replace('/', '__')
-    if not safe_name.endswith('.md'):
-        safe_name += '.md'
+        safe_name = path + '.md' if not path.endswith('.md') else path
+    else:
+        # For subdirectories, replace slashes with double underscores
+        # e.g., "advanced/setup" becomes "advanced__setup.md"
+        safe_name = path.replace('/', '__')
+        if not safe_name.endswith('.md'):
+            safe_name += '.md'
+
+    # Reject empty or invalid results
+    if not safe_name or safe_name == '.md':
+        raise ValueError(f"Could not derive safe filename from URL path: {url_path}")
+
     return safe_name
 
 
@@ -136,15 +204,8 @@ def discover_sitemap_and_base_url(session: requests.Session) -> Tuple[str, str]:
             response = session.get(sitemap_url, headers=HEADERS, timeout=30)
             if response.status_code == 200:
                 # Extract base URL from the first URL in sitemap
-                # Parse XML safely to prevent XXE attacks
-                try:
-                    # Try with security parameters (Python 3.8+)
-                    parser = ET.XMLParser(forbid_dtd=True, forbid_entities=True, forbid_external=True)
-                    root = ET.fromstring(response.content, parser=parser)
-                except TypeError:
-                    # Fallback for older Python versions
-                    logger.warning("XMLParser security parameters not available, using default parser")
-                    root = ET.fromstring(response.content)
+                # Parse XML safely (defusedxml prevents XXE attacks)
+                root = ET.fromstring(response.content)
                 
                 # Try with namespace first
                 namespace = {'ns': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
@@ -171,7 +232,7 @@ def discover_sitemap_and_base_url(session: requests.Session) -> Tuple[str, str]:
             logger.warning(f"Failed to fetch {sitemap_url}: {e}")
             continue
     
-    raise Exception("Could not find a valid sitemap")
+    raise FetchError("Could not find a valid sitemap")
 
 
 def discover_claude_code_pages(session: requests.Session, sitemap_url: str) -> List[str]:
@@ -185,15 +246,8 @@ def discover_claude_code_pages(session: requests.Session, sitemap_url: str) -> L
         response = session.get(sitemap_url, headers=HEADERS, timeout=30)
         response.raise_for_status()
         
-        # Parse XML sitemap safely
-        try:
-            # Try with security parameters (Python 3.8+)
-            parser = ET.XMLParser(forbid_dtd=True, forbid_entities=True, forbid_external=True)
-            root = ET.fromstring(response.content, parser=parser)
-        except TypeError:
-            # Fallback for older Python versions
-            logger.warning("XMLParser security parameters not available, using default parser")
-            root = ET.fromstring(response.content)
+        # Parse XML safely (defusedxml prevents XXE attacks)
+        root = ET.fromstring(response.content)
         
         # Extract all URLs from sitemap
         urls = []
@@ -258,25 +312,7 @@ def discover_claude_code_pages(session: requests.Session, sitemap_url: str) -> L
         logger.error(f"Failed to discover pages from sitemap: {e}")
         logger.warning("Falling back to essential pages...")
 
-        # More comprehensive fallback list (updated for new URL structure)
-        # NOTE: Changed from /en/docs/claude-code/ to /docs/en/
-        return [
-            "/docs/en/overview",
-            "/docs/en/setup",
-            "/docs/en/quickstart",
-            "/docs/en/memory",
-            "/docs/en/common-workflows",
-            "/docs/en/ide-integrations",
-            "/docs/en/mcp",
-            "/docs/en/github-actions",
-            "/docs/en/sdk",
-            "/docs/en/troubleshooting",
-            "/docs/en/security",
-            "/docs/en/settings",
-            "/docs/en/hooks",
-            "/docs/en/costs",
-            "/docs/en/monitoring-usage",
-        ]
+        return list(FALLBACK_DOCUMENTATION_PAGES)
 
 
 def validate_markdown_content(content: str, filename: str) -> None:
@@ -340,11 +376,14 @@ def fetch_markdown_content(path: str, session: requests.Session, base_url: str) 
     
     for attempt in range(MAX_RETRIES):
         try:
-            response = session.get(markdown_url, headers=HEADERS, timeout=30, allow_redirects=True)
+            response = safe_get(session, markdown_url, headers=HEADERS, timeout=30)
             
             # Handle specific HTTP errors
             if response.status_code == 429:  # Rate limited
-                wait_time = int(response.headers.get('Retry-After', 60))
+                try:
+                    wait_time = max(0, min(int(response.headers.get('Retry-After', 60)), 300))
+                except (ValueError, TypeError):
+                    wait_time = 60
                 logger.warning(f"Rate limited. Waiting {wait_time} seconds...")
                 time.sleep(wait_time)
                 continue
@@ -368,7 +407,7 @@ def fetch_markdown_content(path: str, session: requests.Session, base_url: str) 
                 logger.info(f"Retrying in {jittered_delay:.1f} seconds...")
                 time.sleep(jittered_delay)
             else:
-                raise Exception(f"Failed to fetch {filename} after {MAX_RETRIES} attempts: {e}")
+                raise FetchError(f"Failed to fetch {filename} after {MAX_RETRIES} attempts: {e}") from e
         
         except ValueError as e:
             logger.error(f"Content validation failed for {filename}: {e}")
@@ -393,18 +432,21 @@ def fetch_changelog(session: requests.Session) -> Tuple[str, str]:
     
     for attempt in range(MAX_RETRIES):
         try:
-            response = session.get(changelog_url, headers=HEADERS, timeout=30, allow_redirects=True)
+            response = safe_get(session, changelog_url, headers=HEADERS, timeout=30)
             
             if response.status_code == 429:  # Rate limited
-                wait_time = int(response.headers.get('Retry-After', 60))
+                try:
+                    wait_time = max(0, min(int(response.headers.get('Retry-After', 60)), 300))
+                except (ValueError, TypeError):
+                    wait_time = 60
                 logger.warning(f"Rate limited. Waiting {wait_time} seconds...")
                 time.sleep(wait_time)
                 continue
-            
+
             response.raise_for_status()
-            
+
             content = response.text
-            
+
             # Add header to indicate this is from Claude Code repo, not docs site
             header = """# Claude Code Changelog
 
@@ -432,7 +474,7 @@ def fetch_changelog(session: requests.Session) -> Tuple[str, str]:
                 logger.info(f"Retrying in {jittered_delay:.1f} seconds...")
                 time.sleep(jittered_delay)
             else:
-                raise Exception(f"Failed to fetch changelog after {MAX_RETRIES} attempts: {e}")
+                raise FetchError(f"Failed to fetch changelog after {MAX_RETRIES} attempts: {e}") from e
         
         except ValueError as e:
             logger.error(f"Changelog validation failed: {e}")
@@ -441,8 +483,12 @@ def fetch_changelog(session: requests.Session) -> Tuple[str, str]:
 
 def save_markdown_file(docs_dir: Path, filename: str, content: str) -> str:
     """Save markdown content and return its hash."""
-    file_path = docs_dir / filename
-    
+    file_path = (docs_dir / filename).resolve()
+
+    # Ensure the resolved path stays within docs_dir
+    if not str(file_path).startswith(str(docs_dir.resolve())):
+        raise ValueError(f"Path traversal detected: {filename} resolves outside {docs_dir}")
+
     try:
         file_path.write_text(content, encoding='utf-8')
         content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
@@ -451,6 +497,30 @@ def save_markdown_file(docs_dir: Path, filename: str, content: str) -> str:
     except Exception as e:
         logger.error(f"Failed to save {filename}: {e}")
         raise
+
+
+def process_fetched_content(
+    docs_dir: Path,
+    filename: str,
+    content: str,
+    manifest: dict,
+    manifest_entry: dict,
+) -> Tuple[str, str]:
+    """Check for changes, save if needed, return (content_hash, last_updated)."""
+    old_hash = manifest.get("files", {}).get(filename, {}).get("hash", "")
+    old_entry = manifest.get("files", {}).get(filename, {})
+
+    if content_has_changed(content, old_hash):
+        content_hash = save_markdown_file(docs_dir, filename, content)
+        logger.info(f"Updated: {filename}")
+        last_updated = datetime.now().isoformat()
+    else:
+        content_hash = old_hash
+        logger.info(f"Unchanged: {filename}")
+        last_updated = old_entry.get("last_updated", datetime.now().isoformat())
+
+    manifest_entry.update({"hash": content_hash, "last_updated": last_updated})
+    return content_hash, last_updated
 
 
 def cleanup_old_files(docs_dir: Path, current_files: Set[str], manifest: dict) -> None:
@@ -464,8 +534,13 @@ def cleanup_old_files(docs_dir: Path, current_files: Set[str], manifest: dict) -
     for filename in files_to_remove:
         if filename == MANIFEST_FILE:  # Never delete the manifest
             continue
-            
-        file_path = docs_dir / filename
+
+        file_path = (docs_dir / filename).resolve()
+        # Ensure the resolved path stays within docs_dir
+        if not str(file_path).startswith(str(docs_dir.resolve())):
+            logger.warning(f"Skipping cleanup of {filename}: resolves outside {docs_dir}")
+            continue
+
         if file_path.exists():
             logger.info(f"Removing obsolete file: {filename}")
             file_path.unlink()
@@ -498,6 +573,7 @@ def main():
     # Create a session for connection pooling
     sitemap_url = None
     with requests.Session() as session:
+        session.verify = True  # Explicit TLS certificate verification
         # Discover sitemap and base URL
         try:
             sitemap_url, base_url = discover_sitemap_and_base_url(session)
@@ -511,25 +587,7 @@ def main():
         if sitemap_url:
             documentation_pages = discover_claude_code_pages(session, sitemap_url)
         else:
-            # Use fallback pages if sitemap discovery failed (updated for new URL structure)
-            # NOTE: Changed from /en/docs/claude-code/ to /docs/en/
-            documentation_pages = [
-                "/docs/en/overview",
-                "/docs/en/setup",
-                "/docs/en/quickstart",
-                "/docs/en/memory",
-                "/docs/en/common-workflows",
-                "/docs/en/ide-integrations",
-                "/docs/en/mcp",
-                "/docs/en/github-actions",
-                "/docs/en/sdk",
-                "/docs/en/troubleshooting",
-                "/docs/en/security",
-                "/docs/en/settings",
-                "/docs/en/hooks",
-                "/docs/en/costs",
-                "/docs/en/monitoring-usage",
-            ]
+            documentation_pages = list(FALLBACK_DOCUMENTATION_PAGES)
         
         if not documentation_pages:
             logger.error("No documentation pages discovered!")
@@ -541,28 +599,13 @@ def main():
             
             try:
                 filename, content = fetch_markdown_content(page_path, session, base_url)
-                
-                # Check if content has changed
-                old_hash = manifest.get("files", {}).get(filename, {}).get("hash", "")
-                old_entry = manifest.get("files", {}).get(filename, {})
-                
-                if content_has_changed(content, old_hash):
-                    content_hash = save_markdown_file(docs_dir, filename, content)
-                    logger.info(f"Updated: {filename}")
-                    # Only update timestamp when content actually changes
-                    last_updated = datetime.now().isoformat()
-                else:
-                    content_hash = old_hash
-                    logger.info(f"Unchanged: {filename}")
-                    # Keep existing timestamp for unchanged files
-                    last_updated = old_entry.get("last_updated", datetime.now().isoformat())
-                
-                new_manifest["files"][filename] = {
+
+                entry = {
                     "original_url": f"{base_url}{page_path}",
                     "original_md_url": f"{base_url}{page_path}.md",
-                    "hash": content_hash,
-                    "last_updated": last_updated
                 }
+                process_fetched_content(docs_dir, filename, content, manifest, entry)
+                new_manifest["files"][filename] = entry
                 
                 fetched_files.add(filename)
                 successful += 1
@@ -575,41 +618,28 @@ def main():
                 logger.error(f"Failed to process {page_path}: {e}")
                 failed += 1
                 failed_pages.append(page_path)
-    
-    # Fetch Claude Code changelog
-    logger.info("Fetching Claude Code changelog...")
-    try:
-        filename, content = fetch_changelog(session)
-        
-        # Check if content has changed
-        old_hash = manifest.get("files", {}).get(filename, {}).get("hash", "")
-        old_entry = manifest.get("files", {}).get(filename, {})
-        
-        if content_has_changed(content, old_hash):
-            content_hash = save_markdown_file(docs_dir, filename, content)
-            logger.info(f"Updated: {filename}")
-            last_updated = datetime.now().isoformat()
-        else:
-            content_hash = old_hash
-            logger.info(f"Unchanged: {filename}")
-            last_updated = old_entry.get("last_updated", datetime.now().isoformat())
-        
-        new_manifest["files"][filename] = {
-            "original_url": "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md",
-            "original_raw_url": "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md",
-            "hash": content_hash,
-            "last_updated": last_updated,
-            "source": "claude-code-repository"
-        }
-        
-        fetched_files.add(filename)
-        successful += 1
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch changelog: {e}")
-        failed += 1
-        failed_pages.append("changelog")
-    
+
+        # Fetch Claude Code changelog (inside session context)
+        logger.info("Fetching Claude Code changelog...")
+        try:
+            filename, content = fetch_changelog(session)
+
+            entry = {
+                "original_url": "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md",
+                "original_raw_url": "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md",
+                "source": "claude-code-repository",
+            }
+            process_fetched_content(docs_dir, filename, content, manifest, entry)
+            new_manifest["files"][filename] = entry
+
+            fetched_files.add(filename)
+            successful += 1
+
+        except Exception as e:
+            logger.error(f"Failed to fetch changelog: {e}")
+            failed += 1
+            failed_pages.append("changelog")
+
     # Clean up old files (only those we previously fetched)
     cleanup_old_files(docs_dir, fetched_files, manifest)
     

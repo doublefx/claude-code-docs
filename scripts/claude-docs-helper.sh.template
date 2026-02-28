@@ -58,13 +58,12 @@ auto_update() {
         echo "🔄 Updating documentation..." >&2
         git pull --quiet origin "$BRANCH" 2>&1 | grep -v "Merge made by" || true
         
-        # Check if installer needs updating
-        local INSTALLER_VERSION=$SCRIPT_VERSION
-        local VERSION_INT=$(echo "$INSTALLER_VERSION" | sed 's/^0\.//' | cut -d. -f1)
-
-        if [[ $VERSION_INT -ge 3 ]]; then
-            echo "🔧 Updating Claude Code Docs installer..." >&2
-            ./install.sh >/dev/null 2>&1
+        # Check if template has a newer version than the installed helper
+        if [[ -f "$DOCS_PATH/scripts/claude-docs-helper.sh.template" ]]; then
+            local TEMPLATE_VERSION=$(grep '^SCRIPT_VERSION=' "$DOCS_PATH/scripts/claude-docs-helper.sh.template" | head -1 | cut -d'"' -f2)
+            if [[ -n "$TEMPLATE_VERSION" && "$TEMPLATE_VERSION" != "$SCRIPT_VERSION" ]]; then
+                echo "ℹ️  Helper update available ($SCRIPT_VERSION -> $TEMPLATE_VERSION). Run: ~/.claude-code-docs/install.sh" >&2
+            fi
         fi
     fi
     
@@ -129,55 +128,20 @@ read_doc() {
     
     if [[ -f "$doc_path" ]]; then
         print_doc_header
-        
-        # Quick check if we're up to date (0.37s)
-        cd "$DOCS_PATH" 2>/dev/null || exit 1
-        local BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-        local VERSION=$SCRIPT_VERSION
-        
-        # Do the fetch to check status
-        local COMPARE_BRANCH="$BRANCH"
-        if ! git fetch --quiet origin "$BRANCH" 2>/dev/null; then
-            # Try main if current branch doesn't exist on origin
-            if git fetch --quiet origin main 2>/dev/null; then
-                COMPARE_BRANCH="main"
-            else
-                echo "⚠️  Could not check GitHub for updates - using cached docs (v$VERSION, $BRANCH)"
-                echo ""
-                cat "$doc_path"
-                echo ""
-                echo "📖 Official page: https://docs.anthropic.com/en/docs/claude-code/$topic"
-                return
-            fi
-        fi
-        
-        local LOCAL=$(git rev-parse HEAD 2>/dev/null)
-        local REMOTE=$(git rev-parse origin/"$COMPARE_BRANCH" 2>/dev/null)
-        local BEHIND=$(git rev-list HEAD..origin/"$COMPARE_BRANCH" --count 2>/dev/null || echo "0")
-        
-        if [[ "$LOCAL" != "$REMOTE" ]] && [[ "$BEHIND" -gt 0 ]]; then
-            # We're behind - safe to update
-            echo "🔄 Updating to latest documentation..."
-            git pull --quiet origin "$COMPARE_BRANCH" 2>&1 | grep -v "Merge made by" || true
-            
-            # Check if installer needs updating
-            local INSTALLER_VERSION=$SCRIPT_VERSION
-            local VERSION_INT=$(echo "$INSTALLER_VERSION" | sed 's/^0\.//' | cut -d. -f1)
 
-            if [[ $VERSION_INT -ge 3 ]]; then
-                ./install.sh >/dev/null 2>&1
-            fi
-            echo "✅ Updated to latest (v$VERSION, $BRANCH)"
+        # Sync with remote (reuse auto_update instead of inline fetch/pull)
+        auto_update
+        local sync_status=$?
+        local VERSION=$SCRIPT_VERSION
+        local BRANCH=$(cd "$DOCS_PATH" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+
+        if [[ $sync_status -eq 2 ]]; then
+            echo "⚠️  Could not check GitHub for updates - using cached docs (v$VERSION, $BRANCH)"
         else
-            local AHEAD=$(git rev-list origin/"$COMPARE_BRANCH"..HEAD --count 2>/dev/null || echo "0")
-            if [[ "$AHEAD" -gt 0 ]]; then
-                echo "⚠️  Using local development version (v$VERSION, $BRANCH, +$AHEAD commits)"
-            else
-                echo "✅ You have the latest docs (v$VERSION, $BRANCH)"
-            fi
+            echo "✅ You have the latest docs (v$VERSION, $BRANCH)"
         fi
         echo ""
-        
+
         cat "$doc_path"
         echo ""
         if [[ "$topic" == "changelog" ]]; then
@@ -241,56 +205,50 @@ hook_check() {
 
 # Function to show what's new (simplified version)
 whats_new() {
-    # Temporarily disable strict error handling for this function
-    set +e
-    
-    print_doc_header
-    
-    # Auto-update first (synchronous - we need latest git history)
-    auto_update || true  # Don't fail if auto-update fails
-    
-    cd "$DOCS_PATH" 2>/dev/null || {
-        echo "❌ Error: Could not access documentation directory"
-        return 1
-    }
-    
-    echo "📚 Recent documentation updates:"
-    echo ""
-    
-    # Get recent commits (simplified - just show all doc commits)
-    local count=0
-    
-    # Show recent commits
-    while IFS= read -r commit_line && [[ $count -lt 5 ]]; do
-        local hash=$(echo "$commit_line" | cut -d' ' -f1)
-        local date=$(git show -s --format=%cr "$hash" 2>/dev/null || echo "unknown")
-        
-        echo "• $date:"
-        echo "  📎 https://github.com/ericbuess/claude-code-docs/commit/$hash"
-        
-        # Show which docs changed
-        local changed_docs=$(git diff-tree --no-commit-id --name-only -r "$hash" -- docs/*.md 2>/dev/null | sed 's|docs/||' | sed 's|\.md$||' | head -5)
-        if [[ -n "$changed_docs" ]]; then
-            echo "$changed_docs" | while read -r doc; do
-                [[ -n "$doc" ]] && echo "  📄 $doc: https://docs.anthropic.com/en/docs/claude-code/$doc"
-            done
+    # Run in subshell with relaxed error handling to avoid toggling set +e in parent
+    (
+        set +e
+
+        print_doc_header
+
+        # Auto-update first (synchronous - we need latest git history)
+        auto_update || true
+
+        cd "$DOCS_PATH" 2>/dev/null || {
+            echo "❌ Error: Could not access documentation directory"
+            exit 1
+        }
+
+        echo "📚 Recent documentation updates:"
+        echo ""
+
+        local count=0
+
+        while IFS= read -r commit_line && [[ $count -lt 5 ]]; do
+            local hash=$(echo "$commit_line" | cut -d' ' -f1)
+            local date=$(git show -s --format=%cr "$hash" 2>/dev/null || echo "unknown")
+
+            echo "• $date:"
+            echo "  📎 https://github.com/ericbuess/claude-code-docs/commit/$hash"
+
+            local changed_docs=$(git diff-tree --no-commit-id --name-only -r "$hash" -- docs/*.md 2>/dev/null | sed 's|docs/||' | sed 's|\.md$||' | head -5)
+            if [[ -n "$changed_docs" ]]; then
+                echo "$changed_docs" | while read -r doc; do
+                    [[ -n "$doc" ]] && echo "  📄 $doc: https://docs.anthropic.com/en/docs/claude-code/$doc"
+                done
+            fi
+            echo ""
+            ((count++))
+        done < <(git log --oneline -10 -- docs/*.md 2>/dev/null | grep -v "Merge" || true)
+
+        if [[ $count -eq 0 ]]; then
+            echo "No recent documentation updates found."
+            echo ""
         fi
-        echo ""
-        ((count++))
-    done < <(git log --oneline -10 -- docs/*.md 2>/dev/null | grep -v "Merge" || true)
-    
-    if [[ $count -eq 0 ]]; then
-        echo "No recent documentation updates found."
-        echo ""
-    fi
-    
-    echo "📎 Full changelog: https://github.com/ericbuess/claude-code-docs/commits/main/docs"
-    echo "📚 COMMUNITY MIRROR - NOT AFFILIATED WITH ANTHROPIC"
-    
-    # Re-enable strict error handling
-    set -e
-    
-    # Ensure we always exit successfully
+
+        echo "📎 Full changelog: https://github.com/ericbuess/claude-code-docs/commits/main/docs"
+        echo "📚 COMMUNITY MIRROR - NOT AFFILIATED WITH ANTHROPIC"
+    )
     return 0
 }
 
@@ -302,8 +260,8 @@ uninstall() {
     echo ""
     
     echo "This will remove:"
-    echo "  • The /docs command from ~/.claude/commands/docs.md"
-    echo "  • The auto-update hook from ~/.claude/settings.json"
+    echo "  • The /docs command from ${CLAUDE_CONFIG_DIR:-~/.claude}/commands/docs.md"
+    echo "  • The auto-update hook from ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json"
     echo "  • The installation directory ~/.claude-code-docs"
     echo ""
     
