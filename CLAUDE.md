@@ -65,7 +65,7 @@ scripts/
 ### User Installation
 
 ```bash
-claude plugin marketplace add https://github.com/doublefx/claude-code-docs
+claude plugin marketplace add https://github.com/doublefx/magic-claude-code-docs
 claude plugin install magic-claude-docs
 ```
 

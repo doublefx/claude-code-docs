@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Community mirror of Claude Code documentation with offline access",
-    "homepage": "https://github.com/doublefx/claude-code-docs"
+    "homepage": "https://github.com/doublefx/magic-claude-code-docs"
   },
   "plugins": [
     {
@@ -16,8 +16,8 @@
         "name": "doublefx",
         "url": "https://github.com/doublefx"
       },
-      "homepage": "https://github.com/doublefx/claude-code-docs",
-      "repository": "https://github.com/doublefx/claude-code-docs",
+      "homepage": "https://github.com/doublefx/magic-claude-code-docs",
+      "repository": "https://github.com/doublefx/magic-claude-code-docs",
       "license": "MIT",
       "keywords": [
         "documentation",

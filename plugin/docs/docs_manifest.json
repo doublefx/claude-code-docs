@@ -377,8 +377,8 @@
     "fetch_tool_version": "4.0"
   },
   "last_updated": "2026-03-01T04:50:23.782475",
-  "base_url": "https://raw.githubusercontent.com/doublefx/claude-code-docs/main/plugin/docs/",
-  "github_repository": "doublefx/claude-code-docs",
+  "base_url": "https://raw.githubusercontent.com/doublefx/magic-claude-code-docs/main/plugin/docs/",
+  "github_repository": "doublefx/magic-claude-code-docs",
   "github_ref": "main",
   "description": "Claude Code documentation manifest. Keys are filenames, append to base_url for full URL."
 }

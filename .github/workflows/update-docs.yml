@@ -79,7 +79,7 @@ jobs:
     - name: Generate recent changes
       if: steps.verify-changed-files.outputs.changed == 'true'
       run: |
-        GITHUB_REPO="${GITHUB_REPOSITORY:-doublefx/claude-code-docs}"
+        GITHUB_REPO="${GITHUB_REPOSITORY:-doublefx/magic-claude-code-docs}"
         OUTPUT="plugin/docs/recent_changes.md"
 
         echo "# Recent Documentation Changes" > "$OUTPUT"

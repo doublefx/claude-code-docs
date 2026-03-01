@@ -23,7 +23,7 @@ Also mention:
 ### "what's new" or "whats new" or "recent" or "changes"
 Read the file `~/.claude-code-docs/recent_changes.md` and display its contents.
 
-If the file does not exist, inform the user that change tracking is not yet available and suggest checking the GitHub repository at https://github.com/doublefx/claude-code-docs/commits/main/plugin/docs.
+If the file does not exist, inform the user that change tracking is not yet available and suggest checking the GitHub repository at https://github.com/doublefx/magic-claude-code-docs/commits/main/plugin/docs.
 
 ### Specific topic (e.g., "hooks", "mcp", "setup")
 1. Strip `.md` extension if present
@@ -46,7 +46,7 @@ The manifest at `~/.claude-code-docs/docs_manifest.json` contains:
 
 Always start responses with:
 ```
-COMMUNITY MIRROR: https://github.com/doublefx/claude-code-docs
+COMMUNITY MIRROR: https://github.com/doublefx/magic-claude-code-docs
 OFFICIAL DOCS: https://code.claude.com/docs/en/
 ```
 

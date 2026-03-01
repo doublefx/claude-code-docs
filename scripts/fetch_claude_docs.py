@@ -116,13 +116,13 @@ def save_manifest(docs_dir: Path, manifest: dict) -> None:
     manifest_path = docs_dir / MANIFEST_FILE
 
     # Get GitHub repository from environment or use default
-    github_repo = os.environ.get("GITHUB_REPOSITORY", "doublefx/claude-code-docs")
+    github_repo = os.environ.get("GITHUB_REPOSITORY", "doublefx/magic-claude-code-docs")
     github_ref = os.environ.get("GITHUB_REF_NAME", "main")
 
     # Validate repository name format (owner/repo)
     if not re.match(r"^[\w.-]+/[\w.-]+$", github_repo):
         logger.warning(f"Invalid repository format: {github_repo}, using default")
-        github_repo = "doublefx/claude-code-docs"
+        github_repo = "doublefx/magic-claude-code-docs"
 
     # Validate branch/ref name
     if not re.match(r"^[\w.-]+$", github_ref):
@@ -517,7 +517,7 @@ def main() -> None:
     logger.info("Starting Claude Code documentation fetch")
 
     # Log configuration
-    github_repo = os.environ.get("GITHUB_REPOSITORY", "doublefx/claude-code-docs")
+    github_repo = os.environ.get("GITHUB_REPOSITORY", "doublefx/magic-claude-code-docs")
     logger.info(f"GitHub repository: {github_repo}")
 
     # Create docs directory at repository root
