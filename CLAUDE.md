@@ -43,7 +43,6 @@ plugin/
 scripts/
   fetch_claude_docs.py              # Documentation fetcher (CI only)
   requirements.txt                  # Python dependencies (CI only)
-  claude-docs-helper.sh.template    # DEPRECATED — kept for reference
 .github/
   workflows/update-docs.yml         # CI: sentinel check → fetch → version bump
   workflows/release.yml             # CI: release on plugin.json version change
