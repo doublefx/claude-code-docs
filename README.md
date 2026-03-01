@@ -1,7 +1,7 @@
 # Claude Code Documentation Mirror
 
 [![Last Update](https://img.shields.io/github/last-commit/doublefx/claude-code-docs/main.svg?label=docs%20updated)](https://github.com/doublefx/claude-code-docs/commits/main)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue)]()
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)]()
 
 Local mirror of Claude Code documentation from https://code.claude.com/docs/en/, updated every 3 hours via GitHub Actions.
 
