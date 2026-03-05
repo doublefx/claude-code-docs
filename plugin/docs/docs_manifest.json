@@ -352,8 +352,8 @@
       "original_url": "https://code.claude.com/docs/en/claude_code_docs_map.md",
       "title": "Documentation Map",
       "source": "docs-map",
-      "hash": "f3df247c469a5ad66cb02b30017048e0e24a3e097b31d6c3f07afba921dc2502",
-      "last_updated": "2026-03-05T01:27:32.973259"
+      "hash": "e49863856526de5e4620f28a3568e1814147039847a120b4b686319647699346",
+      "last_updated": "2026-03-05T19:06:42.697312"
     },
     "changelog.md": {
       "original_url": "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md",
@@ -364,8 +364,8 @@
     }
   },
   "fetch_metadata": {
-    "last_fetch_completed": "2026-03-05T14:33:06.130464",
-    "fetch_duration_seconds": 36.363356,
+    "last_fetch_completed": "2026-03-05T19:06:42.709069",
+    "fetch_duration_seconds": 34.668994,
     "total_pages_discovered": 59,
     "pages_fetched_successfully": 60,
     "pages_failed": 1,
@@ -376,7 +376,7 @@
     "total_files": 60,
     "fetch_tool_version": "4.0"
   },
-  "last_updated": "2026-03-05T14:33:06.130647",
+  "last_updated": "2026-03-05T19:06:42.709231",
   "base_url": "https://raw.githubusercontent.com/doublefx/magic-claude-code-docs/main/plugin/docs/",
   "github_repository": "doublefx/magic-claude-code-docs",
   "github_ref": "main",
